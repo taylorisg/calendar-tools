@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Block Time</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+
+    .container { max-width: 680px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+    }
+    header h1 { font-size: 28px; font-weight: 700; }
+    header p { color: #6e6e73; font-size: 14px; margin-top: 2px; }
+
+    .auth-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      text-decoration: none;
+    }
+    .auth-badge.connected { background: #d1fae5; color: #065f46; }
+    .auth-badge.disconnected { background: #fee2e2; color: #991b1b; }
+    .auth-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .auth-badge.connected .dot { background: #10b981; }
+    .auth-badge.disconnected .dot { background: #ef4444; }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    }
+
+    .card h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #6e6e73;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-bottom: 20px;
+    }
+
+    .field { margin-bottom: 18px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    .field .hint { font-size: 12px; color: #6e6e73; margin-top: 4px; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    input[type="number"],
+    input[type="time"],
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1.5px solid #e5e5ea;
+      border-radius: 10px;
+      font-size: 15px;
+      color: #1d1d1f;
+      background: white;
+      outline: none;
+      transition: border-color .15s;
+      appearance: none;
+    }
+    input:focus, select:focus { border-color: #0071e3; }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toggle-row label { margin: 0; }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 26px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: #e5e5ea;
+      border-radius: 26px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 20px; height: 20px;
+      left: 3px; bottom: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: transform .2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+    .toggle input:checked + .toggle-slider { background: #0071e3; }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    button {
+      padding: 12px;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    button:active { transform: scale(.98); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .btn-preview { background: #f5f5f7; color: #1d1d1f; }
+    .btn-schedule { background: #0071e3; color: white; }
+    .btn-refresh { background: #ff3b30; color: white; }
+
+    #output { margin-top: 24px; display: none; }
+    #output h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #6e6e73;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-bottom: 16px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .summary-item {
+      background: white;
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    }
+    .summary-item .value { font-size: 24px; font-weight: 700; }
+    .summary-item .label { font-size: 12px; color: #6e6e73; margin-top: 2px; }
+
+    .block-list { display: flex; flex-direction: column; gap: 6px; }
+    .block-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: white;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+    .block-item .emoji { font-size: 18px; width: 24px; text-align: center; }
+    .block-item .info { flex: 1; }
+    .block-item .day { font-weight: 500; }
+    .block-item .time { color: #6e6e73; font-size: 13px; }
+    .block-item .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .badge-created { background: #d1fae5; color: #065f46; }
+    .badge-skipped { background: #f3f4f6; color: #6b7280; }
+    .badge-preview { background: #eff6ff; color: #1d4ed8; }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      background: #fee2e2;
+      color: #991b1b;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>Block Time ⏰</h1>
+      <p>Protect your focus and lunch on Google Calendar</p>
+    </div>
+    <a id="authBadge" href="/auth/start" class="auth-badge disconnected">
+      <span class="dot"></span>
+      <span id="authLabel">Connect Google</span>
+    </a>
+  </header>
+
+  <div class="card">
+    <h2>General</h2>
+    <div class="field">
+      <div class="toggle-row">
+        <label for="weekdaysOnly">Weekdays only</label>
+        <label class="toggle">
+          <input type="checkbox" id="weekdaysOnly" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+    <div class="field">
+      <label for="days">Days ahead to schedule</label>
+      <input type="number" id="days" min="1" max="60" value="14" />
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="workDayStart">Work day start</label>
+        <input type="time" id="workDayStart" value="08:00" />
+      </div>
+      <div class="field">
+        <label for="workDayEnd">Work day end</label>
+        <input type="time" id="workDayEnd" value="17:00" />
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🍝 Lunch</h2>
+    <div class="row">
+      <div class="field">
+        <label for="lunchWindowStart">Earliest start</label>
+        <input type="time" id="lunchWindowStart" value="11:00" />
+      </div>
+      <div class="field">
+        <label for="lunchWindowEnd">Latest end</label>
+        <input type="time" id="lunchWindowEnd" value="12:30" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="lunchMin">Min length (min)</label>
+        <input type="number" id="lunchMin" min="15" max="120" value="30" />
+      </div>
+      <div class="field">
+        <label for="lunchMax">Max length (min)</label>
+        <input type="number" id="lunchMax" min="15" max="120" value="60" />
+      </div>
+    </div>
+    <p class="hint" style="margin-top:8px">Lunch can be placed over tentative events.</p>
+  </div>
+
+  <div class="card">
+    <h2>🤓 Focus Time</h2>
+    <div class="field">
+      <label for="focusWeeklyHours">Weekly target (hours)</label>
+      <input type="number" id="focusWeeklyHours" min="1" max="40" value="8" />
+      <p class="hint">Prorated automatically for partial weeks.</p>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="focusMin">Min block (min)</label>
+        <input type="number" id="focusMin" min="30" max="240" value="60" />
+      </div>
+      <div class="field">
+        <label for="focusMax">Max block (min)</label>
+        <input type="number" id="focusMax" min="30" max="480" value="180" />
+      </div>
+    </div>
+    <div class="field">
+      <label for="focusPreferAfter">Prefer afternoons after</label>
+      <input type="time" id="focusPreferAfter" value="11:00" />
+      <p class="hint">Fills afternoon slots first, then morning as fallback.</p>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-preview" onclick="run(true, false)">Preview</button>
+    <button class="btn-schedule" onclick="run(false, false)">Schedule</button>
+    <button class="btn-refresh" onclick="run(false, true)">Refresh All</button>
+  </div>
+
+  <div id="output">
+    <h2>Results</h2>
+    <div id="outputContent"></div>
+  </div>
+</div>
+
+<script>
+  let isAuthenticated = false;
+
+  async function loadStatus() {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    isAuthenticated = data.authenticated;
+
+    const badge = document.getElementById('authBadge');
+    const label = document.getElementById('authLabel');
+    if (data.authenticated) {
+      badge.className = 'auth-badge connected';
+      badge.href = '#';
+      label.textContent = 'Google Connected';
+    } else {
+      badge.className = 'auth-badge disconnected';
+      badge.href = '/auth/start';
+      label.textContent = 'Connect Google';
+    }
+
+    const c = data.config;
+    document.getElementById('days').value = c.days;
+    document.getElementById('weekdaysOnly').checked = c.weekdaysOnly;
+    document.getElementById('workDayStart').value = c.workDayStart;
+    document.getElementById('workDayEnd').value = c.workDayEnd;
+    document.getElementById('lunchWindowStart').value = c.lunch.windowStart;
+    document.getElementById('lunchWindowEnd').value = c.lunch.windowEnd;
+    document.getElementById('lunchMin').value = c.lunch.minMinutes;
+    document.getElementById('lunchMax').value = c.lunch.maxMinutes;
+    document.getElementById('focusWeeklyHours').value = c.focusTime.weeklyTargetHours;
+    document.getElementById('focusMin').value = c.focusTime.minBlockMinutes;
+    document.getElementById('focusMax').value = c.focusTime.maxBlockMinutes;
+    document.getElementById('focusPreferAfter').value = c.focusTime.preferAfterTime ?? '11:00';
+  }
+
+  function getConfig() {
+    return {
+      days: parseInt(document.getElementById('days').value),
+      weekdaysOnly: document.getElementById('weekdaysOnly').checked,
+      workDayStart: document.getElementById('workDayStart').value,
+      workDayEnd: document.getElementById('workDayEnd').value,
+      lunch: {
+        windowStart: document.getElementById('lunchWindowStart').value,
+        windowEnd: document.getElementById('lunchWindowEnd').value,
+        minMinutes: parseInt(document.getElementById('lunchMin').value),
+        maxMinutes: parseInt(document.getElementById('lunchMax').value),
+      },
+      focusTime: {
+        weeklyTargetHours: parseInt(document.getElementById('focusWeeklyHours').value),
+        minBlockMinutes: parseInt(document.getElementById('focusMin').value),
+        maxBlockMinutes: parseInt(document.getElementById('focusMax').value),
+        preferAfterTime: document.getElementById('focusPreferAfter').value,
+      },
+    };
+  }
+
+  async function run(dryRun, refresh) {
+    if (!isAuthenticated) {
+      window.location.href = '/auth/start';
+      return;
+    }
+
+    const buttons = document.querySelectorAll('button');
+    buttons.forEach(b => b.disabled = true);
+
+    const output = document.getElementById('output');
+    const content = document.getElementById('outputContent');
+    output.style.display = 'block';
+    content.innerHTML = '<p><span class="spinner"></span> ' + (dryRun ? 'Previewing...' : refresh ? 'Refreshing all blocks...' : 'Scheduling...') + '</p>';
+
+    try {
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(getConfig()),
+      });
+
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun, refresh }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        content.innerHTML = `<div class="error-msg">${data.error}</div>`;
+        return;
+      }
+
+      const s = data.summary;
+      const summaryHtml = `
+        <div class="summary">
+          <div class="summary-item">
+            <div class="value">${s.lunchCount}</div>
+            <div class="label">Lunch blocks</div>
+          </div>
+          <div class="summary-item">
+            <div class="value">${s.focusHours}h</div>
+            <div class="label">Focus (${s.weeklyTarget}h/wk × ${s.weeks})</div>
+          </div>
+          <div class="summary-item">
+            <div class="value">${dryRun ? s.total : s.created}</div>
+            <div class="label">${dryRun ? 'Would create' : 'Created'}</div>
+          </div>
+        </div>`;
+
+      const blocksHtml = data.blocks.map(b => {
+        const [emoji, ...rest] = b.label.split(' ');
+        const labelText = rest.join(' ');
+        const badge = dryRun
+          ? '<span class="badge badge-preview">preview</span>'
+          : b.created
+            ? '<span class="badge badge-created">created</span>'
+            : '<span class="badge badge-skipped">exists</span>';
+        return `
+          <div class="block-item">
+            <span class="emoji">${emoji}</span>
+            <div class="info">
+              <div class="day">${b.day}</div>
+              <div class="time">${b.timeRange} · ${b.duration}m</div>
+            </div>
+            ${badge}
+          </div>`;
+      }).join('');
+
+      content.innerHTML = summaryHtml + '<div class="block-list">' + blocksHtml + '</div>';
+    } catch (e) {
+      content.innerHTML = `<div class="error-msg">${e.message}</div>`;
+    } finally {
+      buttons.forEach(b => b.disabled = false);
+    }
+  }
+
+  // Handle redirect back after auth
+  if (new URLSearchParams(location.search).get('auth') === 'success') {
+    history.replaceState({}, '', '/');
+  }
+
+  loadStatus();
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+{
+  "name": "motion-bulk-creator",
+  "version": "1.0.0",
+  "description": "Bulk create projects and tasks in Motion with rate limiting",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "fetch-projects": "node fetch-projects.js",
+    "pull-open-tasks": "node pull-open-tasks.js",
+    "motion-notes": "tsx src/cliMotionNotes.ts",
+    "block-time": "tsx src/cliBlockTime.ts",
+    "block-time:setup-auth": "tsx src/cliBlockTime.ts --setup-auth",
+    "block-time:dry-run": "tsx src/cliBlockTime.ts --dry-run",
+    "block-time:refresh": "tsx src/cliBlockTime.ts --refresh",
+    "server": "tsx src/server.ts",
+    "build": "tsc"
+  },
+  "keywords": [
+    "motion",
+    "api",
+    "bulk",
+    "tasks",
+    "productivity"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "googleapis": "^171.4.0"
+  }
+}

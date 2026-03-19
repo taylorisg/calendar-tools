@@ -1,0 +1,12 @@
+{
+  "projectId": "pr_D3W99EC2CUiyDt5thhWytx",
+  "tasks": [
+    {
+      "name": "Test task for existing project",
+      "description": "This is a test task added to an existing project",
+      "dueDate": "2025-12-15T17:00:00.000Z",
+      "duration": 60,
+      "priority": "MEDIUM"
+    }
+  ]
+}

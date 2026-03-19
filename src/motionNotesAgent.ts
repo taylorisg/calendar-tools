@@ -1,0 +1,742 @@
+/**
+ * Notes → Tasks agent with LLM parsing and intelligent project inference
+ */
+
+import { MotionProject } from './motionProjects.js';
+import { MotionClient, MotionTaskInput } from './motionClient.js';
+import { createInterface } from 'readline';
+
+export type RawTask = {
+  title: string;
+  description?: string;
+  dueDate?: string; // ISO if implied, otherwise omit
+  priority?: 'low' | 'medium' | 'high' | 'asap';
+  projectHint?: string; // human-readable label, e.g. "Specialty", not an ID
+};
+
+export type ProjectMatch = {
+  projectId?: string;
+  matchedName?: string;
+  confidence: number;
+};
+
+/**
+ * Default project ID to use when no match is found
+ * Can be overridden via DEFAULT_PROJECT_ID environment variable
+ */
+function getDefaultProjectId(): string {
+  const envDefault = process.env.DEFAULT_PROJECT_ID;
+  if (envDefault && envDefault.trim() !== '') {
+    return envDefault.trim();
+  }
+  // TODO: Replace with your default project ID, or set DEFAULT_PROJECT_ID in .env
+  return '<ADD_YOUR_DEFAULT_PROJECT_ID>';
+}
+
+/**
+ * Triage project ID to use when no match is found
+ * Can be overridden via TRIAGE_PROJECT_ID environment variable
+ */
+function getTriageProjectId(): string | null {
+  const envTriage = process.env.TRIAGE_PROJECT_ID;
+  if (envTriage && envTriage.trim() !== '') {
+    return envTriage.trim();
+  }
+  return null;
+}
+
+const DEFAULT_PROJECT: string = getDefaultProjectId();
+
+/**
+ * Parse messy notes into structured tasks using OpenAI LLM
+ */
+export async function parseNotesToTasks(notes: string): Promise<RawTask[]> {
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is required');
+  }
+
+  // Get current date for context
+  const now = new Date();
+  const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+  const currentDateFormatted = now.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+
+  const prompt = `You are a task extraction assistant. Parse the following meeting notes or bullet points into structured tasks.
+
+IMPORTANT: Today's date is ${currentDateFormatted} (${currentDate}). Use this as a reference when interpreting relative dates like "tomorrow", "next week", "Friday", etc. All due dates must be in the future relative to today.
+
+Rules:
+- Extract actionable tasks (not just notes or discussion points)
+- For each task, infer a likely project name from context (e.g., "Specialty program", "Pricing experiments", "Underwriting platform")
+- If a due date is mentioned or implied, include it in ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)
+- CRITICAL: All due dates must be in ${now.getFullYear()} or later - never use past years like 2023 or 2024
+- When interpreting relative dates (e.g., "Friday", "next week", "by end of month"), calculate them based on today's date: ${currentDateFormatted}
+- Assign priority using ONLY these exact values: "low", "medium", "high", "asap" (all lowercase). For urgent/critical tasks, use "asap"
+- Keep task titles concise but descriptive
+- Include relevant context in descriptions
+
+Return valid JSON in this exact format:
+{
+  "tasks": [
+    {
+      "title": "Task title here",
+      "description": "Optional description",
+      "dueDate": "2025-01-15T17:00:00.000Z",
+      "priority": "high",
+      "projectHint": "Project name hint"
+    },
+    {
+      "title": "Urgent task example",
+      "description": "This is urgent",
+      "dueDate": "2025-01-20T17:00:00.000Z",
+      "priority": "asap",
+      "projectHint": "Project name hint"
+    }
+  ]
+}
+
+Notes to parse:
+${notes}`;
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant that extracts tasks from notes and returns valid JSON.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error('No content in OpenAI response');
+    }
+
+    // Parse JSON response
+    let parsed: { tasks?: RawTask[] };
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError) {
+      console.error('❌ Failed to parse LLM response as JSON:');
+      console.error('Raw content:', content);
+      throw new Error('LLM output is not valid JSON');
+    }
+
+    if (!parsed.tasks || !Array.isArray(parsed.tasks)) {
+      throw new Error('LLM response missing "tasks" array');
+    }
+
+    return parsed.tasks;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('LLM')) {
+      throw error;
+    }
+    throw new Error(`Failed to parse notes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Calculate Jaccard similarity between two sets of words
+ */
+function jaccardSimilarity(set1: Set<string>, set2: Set<string>): number {
+  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const union = new Set([...set1, ...set2]);
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+/**
+ * Tokenize text into words (lowercase, alphanumeric only)
+ */
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 2) // Filter out very short words
+  );
+}
+
+/**
+ * Infer project ID from task content using string similarity
+ * Returns the best match found, even if confidence is low
+ */
+export function inferProjectId(
+  task: RawTask,
+  allProjects: MotionProject[]
+): ProjectMatch {
+  if (allProjects.length === 0) {
+    return { confidence: 0 };
+  }
+
+  // Build search text from task
+  const searchTexts: string[] = [];
+  if (task.projectHint) {
+    searchTexts.push(task.projectHint);
+  }
+  if (task.title) {
+    searchTexts.push(task.title);
+  }
+  if (task.description) {
+    searchTexts.push(task.description);
+  }
+
+  const taskTokens = tokenize(searchTexts.join(' '));
+
+  let bestMatch: { project: MotionProject; score: number } | null = null;
+
+  for (const project of allProjects) {
+    // Build project search text
+    const projectTexts: string[] = [project.name];
+    if (project.description) {
+      projectTexts.push(project.description);
+    }
+
+    const projectTokens = tokenize(projectTexts.join(' '));
+    const projectNameTokens = tokenize(project.name);
+
+    // Calculate base Jaccard similarity
+    const similarity = jaccardSimilarity(taskTokens, projectTokens);
+
+    // Boost score if projectHint matches project name (exact or substring)
+    let boostedScore = similarity;
+    if (task.projectHint) {
+      const hintLower = task.projectHint.toLowerCase();
+      const nameLower = project.name.toLowerCase();
+      if (nameLower.includes(hintLower) || hintLower.includes(nameLower)) {
+        boostedScore = Math.max(boostedScore, 0.85);
+      }
+    }
+
+    // Boost if key project name words appear in task (especially important words)
+    const projectNameWords = Array.from(projectNameTokens);
+    const importantProjectWords = projectNameWords.filter(word => 
+      word.length > 4 && // Focus on substantial words
+      !['planning', 'alignment', 'project', 'program'].includes(word) // Common generic words
+    );
+    
+    let nameWordMatches = 0;
+    for (const word of importantProjectWords) {
+      if (taskTokens.has(word)) {
+        nameWordMatches++;
+      }
+    }
+    
+    // If any important project name words match, boost significantly
+    if (nameWordMatches > 0 && importantProjectWords.length > 0) {
+      const nameMatchRatio = nameWordMatches / importantProjectWords.length;
+      // Boost by up to 0.4 based on how many key words match
+      boostedScore = Math.max(boostedScore, similarity + (nameMatchRatio * 0.4));
+    }
+
+    // Semantic matching: check for related concepts
+    // "roadmap", "planning", "strategy" are related
+    // "timing", "schedule", "planning" are related
+    const semanticPairs: [string[], string[]][] = [
+      [['roadmap', 'strategy', 'plan'], ['planning', 'alignment']],
+      [['timing', 'schedule', 'timeline'], ['planning']],
+      [['fleet'], ['fleet']],
+      [['2026', '2025', '2027'], ['2026', '2025', '2027']],
+    ];
+
+    for (const [taskConcepts, projectConcepts] of semanticPairs) {
+      const hasTaskConcept = taskConcepts.some(concept => 
+        Array.from(taskTokens).some(token => token.includes(concept) || concept.includes(token))
+      );
+      const hasProjectConcept = projectConcepts.some(concept =>
+        Array.from(projectTokens).some(token => token.includes(concept) || concept.includes(token))
+      );
+      
+      if (hasTaskConcept && hasProjectConcept) {
+        boostedScore = Math.max(boostedScore, similarity + 0.3);
+      }
+    }
+
+    // If project name contains year and task mentions planning/roadmap, boost
+    const hasYearInProject = /\b(20\d{2})\b/.test(project.name);
+    const hasPlanningTerms = Array.from(taskTokens).some(token => 
+      ['plan', 'roadmap', 'strategy', 'timing', 'schedule'].some(term => 
+        token.includes(term) || term.includes(token)
+      )
+    );
+    if (hasYearInProject && hasPlanningTerms) {
+      boostedScore = Math.max(boostedScore, similarity + 0.25);
+    }
+
+    if (!bestMatch || boostedScore > bestMatch.score) {
+      bestMatch = { project, score: boostedScore };
+    }
+  }
+
+  // Return the best match we found, even if confidence is low
+  // This allows the system to work without a default project
+  if (!bestMatch) {
+    return { confidence: 0 };
+  }
+
+  return {
+    projectId: bestMatch.project.id,
+    matchedName: bestMatch.project.name,
+    confidence: bestMatch.score,
+  };
+}
+
+/**
+ * Find a triage project by ID (from env) or by searching for projects with "triage" in the name
+ */
+function findTriageProject(allProjects: MotionProject[]): MotionProject | null {
+  // First, try to find by TRIAGE_PROJECT_ID environment variable
+  const triageProjectId = getTriageProjectId();
+  if (triageProjectId) {
+    const projectById = allProjects.find(project => project.id === triageProjectId);
+    if (projectById) {
+      return projectById;
+    }
+  }
+
+  // Otherwise, search for projects with "triage" in the name
+  const triageProject = allProjects.find(project => {
+    const name = (project.name || '').toLowerCase();
+    return name.includes('triage');
+  });
+  return triageProject || null;
+}
+
+/**
+ * Assign project to task, falling back to triage project if no match found
+ * Uses triage project if confidence is below threshold (0.25)
+ */
+export function assignProject(
+  raw: RawTask,
+  allProjects: MotionProject[]
+): { projectId: string; matchedName: string; confidence: number } {
+  const match = inferProjectId(raw, allProjects);
+  const CONFIDENCE_THRESHOLD = 0.25; // Below this, use triage/default project
+
+  // If we found a match with adequate confidence, use it
+  if (match.projectId && match.confidence >= CONFIDENCE_THRESHOLD) {
+    return {
+      projectId: match.projectId,
+      matchedName: match.matchedName || 'Unknown',
+      confidence: match.confidence,
+    };
+  }
+
+  // Low confidence match or no match - try to find triage project first
+  const triageProject = findTriageProject(allProjects);
+  if (triageProject) {
+    return {
+      projectId: triageProject.id,
+      matchedName: triageProject.name || 'Triage',
+      confidence: match.confidence || 0, // Preserve the low confidence score for logging
+    };
+  }
+
+  // No triage project found - try to use default project if configured
+  if (DEFAULT_PROJECT !== '<ADD_YOUR_DEFAULT_PROJECT_ID>') {
+    return {
+      projectId: DEFAULT_PROJECT,
+      matchedName: 'default',
+      confidence: match.confidence || 0, // Preserve the low confidence score for logging
+    };
+  }
+
+  // No match, no triage project, and no default - this is an error
+  throw new Error(
+    `No project match found for task "${raw.title}" and no triage project or default project configured. ` +
+    `Please either: (1) create a project with "triage" in the name, (2) set TRIAGE_PROJECT_ID in .env, or (3) set DEFAULT_PROJECT_ID in .env`
+  );
+}
+
+/**
+ * Normalize priority value to Motion API format
+ * Valid values: ASAP, HIGH, MEDIUM, LOW
+ */
+function normalizePriority(priority?: string): string | undefined {
+  if (!priority) {
+    return undefined;
+  }
+
+  const normalized = priority.trim().toUpperCase();
+  
+  // Direct matches (case-insensitive)
+  if (normalized === 'ASAP') {
+    return 'ASAP';
+  }
+  if (normalized === 'HIGH') {
+    return 'HIGH';
+  }
+  if (normalized === 'MEDIUM') {
+    return 'MEDIUM';
+  }
+  if (normalized === 'LOW') {
+    return 'LOW';
+  }
+
+  // Map common variations
+  const priorityMap: Record<string, string> = {
+    'URGENT': 'ASAP',
+    'CRITICAL': 'ASAP',
+    'IMMEDIATE': 'ASAP',
+    'PRIORITY': 'HIGH',
+    'IMPORTANT': 'HIGH',
+    'NORMAL': 'MEDIUM',
+    'STANDARD': 'MEDIUM',
+    'LOW_PRIORITY': 'LOW',
+    'MINOR': 'LOW',
+  };
+
+  if (priorityMap[normalized]) {
+    return priorityMap[normalized];
+  }
+
+  // If it contains keywords, map accordingly
+  if (normalized.includes('URGENT') || normalized.includes('CRITICAL') || normalized.includes('IMMEDIATE')) {
+    return 'ASAP';
+  }
+  if (normalized.includes('HIGH') || normalized.includes('IMPORTANT') || normalized.includes('PRIORITY')) {
+    return 'HIGH';
+  }
+  if (normalized.includes('MEDIUM') || normalized.includes('NORMAL') || normalized.includes('STANDARD')) {
+    return 'MEDIUM';
+  }
+  if (normalized.includes('LOW') || normalized.includes('MINOR')) {
+    return 'LOW';
+  }
+
+  // Default to MEDIUM if we can't determine
+  console.warn(`⚠️  Unknown priority value "${priority}", defaulting to MEDIUM`);
+  return 'MEDIUM';
+}
+
+/**
+ * Convert RawTask to MotionTaskInput format
+ * Uses the provided assignment instead of recalculating
+ */
+export function rawTaskToMotionInput(
+  task: RawTask,
+  assignment: { projectId: string; matchedName: string; confidence: number },
+  workspaceId: string
+): MotionTaskInput {
+  // Build description with project inference info
+  let description = task.description || '';
+  if (assignment.confidence > 0) {
+    const inferenceNote = `\n\n[Inferred project: ${assignment.matchedName} (confidence: ${(assignment.confidence * 100).toFixed(0)}%)]`;
+    description = description ? description + inferenceNote : inferenceNote.trim();
+  }
+
+  // Normalize priority to valid Motion API values
+  const priority = normalizePriority(task.priority);
+
+  return {
+    name: task.title,
+    workspaceId,
+    projectId: assignment.projectId,
+    description: description || undefined,
+    dueDate: task.dueDate,
+    priority,
+  };
+}
+
+export type TaskReview = {
+  task: RawTask;
+  assignment: {
+    projectId: string;
+    matchedName: string;
+    confidence: number;
+  };
+  motionInput: MotionTaskInput;
+};
+
+/**
+ * Prepare tasks and project assignments for review
+ */
+export async function prepareTasksForReview(
+  notes: string,
+  apiKey: string,
+  workspaceId: string
+): Promise<{ tasks: RawTask[]; projects: MotionProject[]; reviews: TaskReview[] }> {
+  console.log('📝 Parsing notes into tasks...\n');
+
+  // Step 1: Parse notes to tasks
+  let tasks: RawTask[];
+  try {
+    tasks = await parseNotesToTasks(notes);
+  } catch (error) {
+    console.error('❌ Failed to parse notes:', error instanceof Error ? error.message : 'Unknown error');
+    throw error;
+  }
+
+  if (tasks.length === 0) {
+    console.log('ℹ️  No tasks extracted from notes. Exiting.');
+    throw new Error('No tasks extracted from notes');
+  }
+
+  console.log(`✅ Parsed ${tasks.length} task(s)\n`);
+
+  // Step 2: Fetch projects
+  console.log('📁 Fetching Motion projects...');
+  const { fetchMotionProjects } = await import('./motionProjects.js');
+  const projects = await fetchMotionProjects(apiKey, workspaceId);
+  console.log(`✅ Found ${projects.length} project(s)\n`);
+
+  // Step 3: Prepare reviews with project assignments
+  const reviews: TaskReview[] = tasks.map(task => {
+    const assignment = assignProject(task, projects);
+    const motionInput = rawTaskToMotionInput(task, assignment, workspaceId);
+    return {
+      task,
+      assignment,
+      motionInput,
+    };
+  });
+
+  return { tasks, projects, reviews };
+}
+
+/**
+ * Display review of tasks and project assignments
+ */
+export function displayReview(reviews: TaskReview[]): void {
+  console.log('\n' + '='.repeat(70));
+  console.log('📋 TASK REVIEW - Project Assignments');
+  console.log('='.repeat(70) + '\n');
+
+  reviews.forEach((review, idx) => {
+    const { task, assignment } = review;
+    const confidencePercent = (assignment.confidence * 100).toFixed(0);
+    const confidenceEmoji = assignment.confidence >= 0.7 ? '✅' : assignment.confidence >= 0.25 ? '⚠️' : '❌';
+
+    console.log(`${idx + 1}. ${task.title}`);
+    
+    if (task.description) {
+      const desc = task.description.length > 100 
+        ? task.description.substring(0, 100) + '...'
+        : task.description;
+      console.log(`   Description: ${desc}`);
+    }
+
+    console.log(`   ${confidenceEmoji} Project: ${assignment.matchedName} (${confidencePercent}% confidence)`);
+    
+    if (task.dueDate) {
+      const dueDate = new Date(task.dueDate).toLocaleDateString();
+      console.log(`   📅 Due: ${dueDate}`);
+    }
+
+    if (task.priority) {
+      console.log(`   ⚡ Priority: ${task.priority.toUpperCase()}`);
+    }
+
+    if (assignment.confidence < 0.25) {
+      console.log(`   ⚠️  Low confidence - using default project`);
+    }
+
+    console.log('');
+  });
+
+  console.log('='.repeat(70));
+}
+
+/**
+ * Prompt user for confirmation with multiple options
+ * Returns: 'yes' | 'no' | 'triage'
+ */
+export function promptConfirmation(question: string): Promise<'yes' | 'no' | 'triage'> {
+  return new Promise((resolve) => {
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    rl.question(question, (answer: string) => {
+      rl.close();
+      const normalized = answer.trim().toLowerCase();
+      if (normalized === 't' || normalized === 'triage') {
+        resolve('triage');
+      } else if (normalized === 'y' || normalized === 'yes') {
+        resolve('yes');
+      } else {
+        resolve('no');
+      }
+    });
+  });
+}
+
+/**
+ * Reassign all tasks to triage project
+ */
+export function reassignAllToTriage(
+  reviews: TaskReview[],
+  allProjects: MotionProject[]
+): TaskReview[] {
+  const triageProject = findTriageProject(allProjects);
+  
+  if (!triageProject) {
+    throw new Error(
+      'No triage project found. Please create a project with "triage" in the name or set TRIAGE_PROJECT_ID in .env'
+    );
+  }
+
+  return reviews.map(review => {
+    const newAssignment = {
+      projectId: triageProject.id,
+      matchedName: triageProject.name || 'Triage',
+      confidence: 0, // Mark as triage assignment
+    };
+    
+    const newMotionInput = rawTaskToMotionInput(review.task, newAssignment, review.motionInput.workspaceId);
+    
+    return {
+      ...review,
+      assignment: newAssignment,
+      motionInput: newMotionInput,
+    };
+  });
+}
+
+/**
+ * Create tasks in Motion after review confirmation
+ */
+export async function createTasksFromReviews(
+  reviews: TaskReview[],
+  apiKey: string,
+  workspaceId: string
+): Promise<void> {
+  const client = new MotionClient(apiKey, workspaceId);
+  const results = {
+    successful: [] as Array<{ title: string; id: string; project: string; confidence: number }>,
+    failed: [] as Array<{ title: string; error: string }>,
+  };
+
+  console.log('\n🚀 Creating tasks in Motion...\n');
+
+  for (let i = 0; i < reviews.length; i++) {
+    const review = reviews[i];
+    const taskNumber = i + 1;
+
+    try {
+      console.log(`[${taskNumber}/${reviews.length}] Creating: ${review.task.title}`);
+      if (review.assignment.confidence === 0 && review.assignment.matchedName.toLowerCase().includes('triage')) {
+        console.log(`   📥 Project: ${review.assignment.matchedName} (sent to triage)`);
+      } else {
+        console.log(`   Project: ${review.assignment.matchedName} (confidence: ${(review.assignment.confidence * 100).toFixed(0)}%)`);
+      }
+      if (review.assignment.matchedName === 'default') {
+        console.log(`   Using default project ID: ${review.assignment.projectId}`);
+      }
+
+      const created = await client.createTask(review.motionInput);
+      results.successful.push({
+        title: review.task.title,
+        id: created.id,
+        project: review.assignment.matchedName,
+        confidence: review.assignment.confidence,
+      });
+      console.log(`   ✅ Created (ID: ${created.id})\n`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`   ❌ Failed: ${errorMessage}\n`);
+      results.failed.push({
+        title: review.task.title,
+        error: errorMessage,
+      });
+    }
+  }
+
+  // Summary
+  console.log('📊 Summary:');
+  console.log(`   ✅ Successful: ${results.successful.length}/${reviews.length}`);
+  console.log(`   ❌ Failed: ${results.failed.length}/${reviews.length}\n`);
+
+  if (results.successful.length > 0) {
+    console.log('✅ Created tasks:');
+    results.successful.forEach((result, idx) => {
+      console.log(`   ${idx + 1}. ${result.title}`);
+      console.log(`      Project: ${result.project} (${(result.confidence * 100).toFixed(0)}% confidence)`);
+      console.log(`      ID: ${result.id}`);
+    });
+    console.log('');
+  }
+
+  if (results.failed.length > 0) {
+    console.log('❌ Failed tasks:');
+    results.failed.forEach((result, idx) => {
+      console.log(`   ${idx + 1}. ${result.title} - ${result.error}`);
+    });
+    console.log('');
+  }
+}
+
+/**
+ * High-level wrapper: create tasks from notes with review step
+ */
+export async function createTasksFromNotes(
+  notes: string,
+  apiKey: string,
+  workspaceId: string,
+  forceTriage: boolean = false
+): Promise<void> {
+  // Prepare tasks and reviews
+  const { reviews, projects } = await prepareTasksForReview(notes, apiKey, workspaceId);
+
+  // Display review
+  displayReview(reviews);
+
+  let finalReviews = reviews;
+
+  // If forceTriage is true, skip prompt and reassign all to triage
+  if (forceTriage) {
+    console.log('\n🔄 Reassigning all tasks to triage project...');
+    finalReviews = reassignAllToTriage(reviews, projects);
+    console.log('✅ All tasks reassigned to triage\n');
+  } else {
+    // Prompt for confirmation with triage option
+    const response = await promptConfirmation(
+      'Proceed with creating these tasks? (y/n/t for triage): '
+    );
+
+    if (response === 'no') {
+      console.log('\n❌ Task creation cancelled by user.');
+      return;
+    }
+
+    if (response === 'triage') {
+      console.log('\n🔄 Reassigning all tasks to triage project...');
+      finalReviews = reassignAllToTriage(reviews, projects);
+      console.log('✅ All tasks reassigned to triage\n');
+    }
+  }
+
+  // Create tasks
+  await createTasksFromReviews(finalReviews, apiKey, workspaceId);
+}
+

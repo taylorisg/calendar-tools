@@ -1,0 +1,113 @@
+{
+  "projectId": "proj_TRIAGE_PLACEHOLDER",
+  "tasks": [
+    {
+      "name": "Triage: P0 comms + VIN visibility requirement (bundle)",
+      "description": "- [ ] (10m) Ask Sahana where \u201cthe backlog\u201d lives + what to use for intake (single source of truth link)\n- [ ] (10m) Capture intake expectations: who files, what fields, what cadence\n- [ ] (20m) Draft desired roadmap categories (simple + mutually exclusive) + 2\u20133 examples each\n- [ ] (10m) Send categories to Sahana with examples of where common items should land\n- [ ] (10m) Locate Sahana\u2019s Precision Pricing PRD + best insertion point for VIN visibility requirement\n- [ ] (20m) Write crisp requirement note: what must be visible (VIN), where (UI surfaces), and why (prevents recurring issue)\n- [ ] (10m) Add acceptance-style bullets + edge cases\n- [ ] (10m) Share note with Sahana (tag) + ask for PRD update acknowledgement\n- [ ] (10m) Save backlog link + categorization guidance somewhere you\u2019ll reuse",
+      "dueDate": "2026-02-20T23:59:59.000Z",
+      "duration": 120,
+      "priority": "ASAP",
+      "autoScheduled": {
+        "startDate": "2026-02-19T09:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: QSQ adherence analysis (#1) \u2014 pull + join + baseline cuts",
+      "description": "- [ ] (15m) Pull last 14\u201328 days from Gold Standard (fields listed in notes)\n- [ ] (25m) Identify/confirm quote event source + join key (submission_id) + define \u201cquoted\u201d flag\n- [ ] (25m) Compute adherence overall + by UW + by program\n- [ ] (25m) Add segment proxies: state + exposure bands + premium/price band (if present)\n- [ ] (20m) Sanity checks: missing joins, duplicate submission_id, timestamp logic\n- [ ] (10m) Save query + export dataset for follow-on analysis",
+      "dueDate": "2026-02-21T23:59:59.000Z",
+      "duration": 120,
+      "priority": "HIGH",
+      "autoScheduled": {
+        "startDate": "2026-02-19T12:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: QSQ adherence analysis (#2) \u2014 opportunities + upside + readout",
+      "description": "- [ ] (20m) Identify top 3 opportunity segments (high \u201cquote\u201d rec volume + low adherence)\n- [ ] (15m) Separately flag segments with high adherence but low bind (pricing/other signal)\n- [ ] (25m) Upside math: assume achievable lift (e.g., +10 pts) \u2192 incremental quotes by segment\n- [ ] (15m) Document methodological caveats (reassignments, multi-UW, timing window)\n- [ ] (15m) Draft concise readout (bullets + 1 table) for report-out",
+      "dueDate": "2026-02-21T23:59:59.000Z",
+      "duration": 90,
+      "priority": "HIGH",
+      "autoScheduled": {
+        "startDate": "2026-02-20T09:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: Lock QSQ metric definitions (quoted window + reassignments)",
+      "description": "- [ ] (15m) Propose \u201cquoted within N days of recommendation\u201d options (e.g., 3/7/14) + tradeoffs\n- [ ] (15m) Decide attribution with reassignments / multi-UW (first assignee vs final actor vs both)\n- [ ] (15m) Write final definitions into analysis notes so the metric is repeatable",
+      "dueDate": "2026-02-21T23:59:59.000Z",
+      "duration": 45,
+      "priority": "HIGH",
+      "autoScheduled": {
+        "startDate": "2026-02-20T11:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: Bulk classification pull \u2014 get Kajol query + run/validate + readout",
+      "description": "- [ ] (10m) Request Kajol\u2019s query link + where it should be run\n- [ ] (30m) Run query + export dataset\n- [ ] (20m) Validate row counts, null rates, obvious misclassifications\n- [ ] (20m) Quick segmentation: volumes + error rates by program/state/size proxy\n- [ ] (10m) Write 5-bullet readout + follow-up questions",
+      "dueDate": "2026-02-27T23:59:59.000Z",
+      "duration": 90,
+      "priority": "MEDIUM",
+      "autoScheduled": {
+        "startDate": "2026-02-23T09:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: UW controls designs kickoff \u2014 artifacts + Arjun alignment + summary",
+      "description": "- [ ] (10m) Ask Katie for existing design artifacts + links (Figma / docs)\n- [ ] (15m) Review artifacts for driver review + MVR review failure mode relevance\n- [ ] (25m) Send Arjun tight framing: failure modes + desired control behaviors\n- [ ] (20m) Propose working session agenda (decisions needed from design)\n- [ ] (20m) Summarize decisions/next steps in writing",
+      "dueDate": "2026-02-28T23:59:59.000Z",
+      "duration": 90,
+      "priority": "MEDIUM",
+      "autoScheduled": {
+        "startDate": "2026-02-23T10:30:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: MVR PRDs by failure mode (#1) \u2014 outline + initial drafts",
+      "description": "- [ ] (20m) List failure modes to cover (from war room notes + taxonomy)\n- [ ] (20m) Create PRD skeleton: current \u2192 desired \u2192 metrics/detection \u2192 owner \u2192 status\n- [ ] (40m) Draft 2\u20133 highest-impact failure mode sections\n- [ ] (20m) Add placeholders for open questions + dependencies",
+      "dueDate": "2026-03-04T23:59:59.000Z",
+      "duration": 120,
+      "priority": "MEDIUM",
+      "autoScheduled": {
+        "startDate": "2026-02-25T09:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: MVR PRDs by failure mode (#2) \u2014 complete + consistency + share",
+      "description": "- [ ] (60m) Complete remaining failure mode sections\n- [ ] (20m) Consistency pass: naming, metrics definitions, ownership/status fields\n- [ ] (20m) Add short top summary: top failure modes + current gaps + next actions\n- [ ] (20m) Share draft links for async feedback",
+      "dueDate": "2026-03-07T23:59:59.000Z",
+      "duration": 120,
+      "priority": "MEDIUM",
+      "autoScheduled": {
+        "startDate": "2026-03-03T09:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    },
+    {
+      "name": "Triage: DS operating cadence doc + message to Alex",
+      "description": "- [ ] (20m) Write operating cadence proposal: recurring touchpoints, owners, inputs/outputs, escalation\n- [ ] (15m) Add \u201cwhat didn\u2019t go well\u201d: concrete examples + impact (factual)\n- [ ] (10m) Propose next-step asks (weekly review, DoD, backfill expectations)\n- [ ] (15m) Send Alex a concise message + link to cadence doc",
+      "dueDate": "2026-02-28T23:59:59.000Z",
+      "duration": 60,
+      "priority": "HIGH",
+      "autoScheduled": {
+        "startDate": "2026-02-24T11:00:00.000Z",
+        "deadlineType": "SOFT",
+        "schedule": "Work Hours"
+      }
+    }
+  ]
+}

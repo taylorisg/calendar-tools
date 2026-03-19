@@ -1,0 +1,231 @@
+export type LunchConfig = {
+  windowStart: string;  // "HH:MM"
+  windowEnd: string;    // "HH:MM"
+  minMinutes: number;
+  maxMinutes: number;
+};
+
+export type FocusConfig = {
+  weeklyTargetHours: number;
+  minBlockMinutes: number;
+  maxBlockMinutes: number;
+  preferAfterTime?: string;  // "HH:MM" — try afternoons first
+};
+
+export type Config = {
+  days: number;
+  weekdaysOnly: boolean;
+  workDayStart: string;  // "HH:MM"
+  workDayEnd: string;    // "HH:MM"
+  lunch: LunchConfig;
+  focusTime: FocusConfig;
+};
+
+export const DEFAULT_CONFIG: Config = {
+  days: 14,
+  weekdaysOnly: true,
+  workDayStart: '08:00',
+  workDayEnd: '17:00',
+  lunch: {
+    windowStart: '11:00',
+    windowEnd: '12:30',
+    minMinutes: 30,
+    maxMinutes: 60,
+  },
+  focusTime: {
+    weeklyTargetHours: 8,
+    minBlockMinutes: 60,
+    maxBlockMinutes: 180,
+    preferAfterTime: '11:00',
+  },
+};
+
+export type ScheduledBlock = {
+  start: Date;
+  end: Date;
+  label: '🍝 Lunch' | '🤓 Focus Time';
+};
+
+export interface BusyInterval {
+  start: Date;
+  end: Date;
+}
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+export function setTimeOnDay(day: Date, hhmm: string): Date {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date(day);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+export function addMinutes(d: Date, minutes: number): Date {
+  return new Date(d.getTime() + minutes * 60_000);
+}
+
+export function durationMinutes(start: Date, end: Date): number {
+  return Math.round((end.getTime() - start.getTime()) / 60_000);
+}
+
+export function isWeekend(d: Date): boolean {
+  return d.getDay() === 0 || d.getDay() === 6;
+}
+
+export function formatTime(d: Date): string {
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+export function formatDayLabel(d: Date): string {
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+/** Returns free intervals within [windowStart, windowEnd] after subtracting busy intervals. */
+export function getFreeIntervals(
+  windowStart: Date,
+  windowEnd: Date,
+  busy: BusyInterval[]
+): { start: Date; end: Date }[] {
+  const clipped = busy
+    .filter((b) => b.end > windowStart && b.start < windowEnd)
+    .map((b) => ({
+      start: new Date(Math.max(b.start.getTime(), windowStart.getTime())),
+      end: new Date(Math.min(b.end.getTime(), windowEnd.getTime())),
+    }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const free: { start: Date; end: Date }[] = [];
+  let cursor = windowStart;
+  for (const b of clipped) {
+    if (b.start > cursor) free.push({ start: cursor, end: b.start });
+    if (b.end > cursor) cursor = b.end;
+  }
+  if (cursor < windowEnd) free.push({ start: cursor, end: windowEnd });
+  return free;
+}
+
+/** Schedules one lunch block for a day if a sufficient gap exists. */
+export function scheduleLunch(
+  day: Date,
+  config: Config,
+  busy: BusyInterval[]
+): ScheduledBlock | null {
+  const windowStart = setTimeOnDay(day, config.lunch.windowStart);
+  const windowEnd = setTimeOnDay(day, config.lunch.windowEnd);
+  const free = getFreeIntervals(windowStart, windowEnd, busy);
+  const slot = free.find((s) => durationMinutes(s.start, s.end) >= config.lunch.minMinutes);
+  if (!slot) return null;
+  const duration = Math.min(durationMinutes(slot.start, slot.end), config.lunch.maxMinutes);
+  return { start: slot.start, end: addMinutes(slot.start, duration), label: '🍝 Lunch' };
+}
+
+/** Schedules focus blocks across days to fill targetMinutes. Mutates busy. */
+export function scheduleFocusBlocks(
+  days: Date[],
+  config: Config,
+  busy: BusyInterval[],
+  targetMinutes: number
+): ScheduledBlock[] {
+  const blocks: ScheduledBlock[] = [];
+  let remaining = targetMinutes;
+
+  type Candidate = { start: Date; end: Date; available: number };
+
+  function collectCandidates(windowStart: string, windowEnd: string): Candidate[] {
+    const result: Candidate[] = [];
+    for (const day of days) {
+      const start = setTimeOnDay(day, windowStart);
+      const end = setTimeOnDay(day, windowEnd);
+      for (const slot of getFreeIntervals(start, end, busy)) {
+        const available = durationMinutes(slot.start, slot.end);
+        if (available >= config.focusTime.minBlockMinutes) {
+          result.push({ start: slot.start, end: slot.end, available });
+        }
+      }
+    }
+    return result.sort((a, b) => b.available - a.available);
+  }
+
+  const afternoonStart = config.focusTime.preferAfterTime ?? '11:00';
+  const candidates: Candidate[] = [
+    ...collectCandidates(afternoonStart, config.workDayEnd),
+    ...collectCandidates(config.workDayStart, afternoonStart),
+  ];
+
+  for (const candidate of candidates) {
+    if (remaining <= 0) break;
+    const stillFree = getFreeIntervals(candidate.start, candidate.end, busy);
+    for (const slot of stillFree) {
+      if (remaining <= 0) break;
+      const available = durationMinutes(slot.start, slot.end);
+      if (available < config.focusTime.minBlockMinutes) continue;
+      const duration = Math.min(available, config.focusTime.maxBlockMinutes, remaining);
+      if (duration < config.focusTime.minBlockMinutes) continue;
+      const start = slot.start;
+      const end = addMinutes(start, duration);
+      blocks.push({ start, end, label: '🤓 Focus Time' });
+      busy.push({ start, end });
+      remaining -= duration;
+    }
+  }
+
+  return blocks;
+}
+
+/** Groups days by ISO week (Monday as start). */
+export function groupByWeek(days: Date[]): Date[][] {
+  const map = new Map<string, Date[]>();
+  for (const d of days) {
+    const monday = new Date(d);
+    const dow = d.getDay() === 0 ? 6 : d.getDay() - 1;
+    monday.setDate(monday.getDate() - dow);
+    monday.setHours(0, 0, 0, 0);
+    const key = monday.toISOString().slice(0, 10);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(d);
+  }
+  return [...map.values()];
+}
+
+/** Builds the target day list from today for config.days. */
+export function buildTargetDays(config: Config): Date[] {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const days: Date[] = [];
+  for (let i = 0; i < config.days; i++) {
+    const d = new Date(now.getTime() + i * 24 * 60 * 60_000);
+    if (config.weekdaysOnly && isWeekend(d)) continue;
+    days.push(d);
+  }
+  return days;
+}
+
+/** Core scheduling: returns all blocks to create given busy intervals. */
+export function scheduleBlocks(
+  config: Config,
+  confirmedBusy: BusyInterval[],
+  allBusy: BusyInterval[]
+): ScheduledBlock[] {
+  const targetDays = buildTargetDays(config);
+  const lunchBusy: BusyInterval[] = [...confirmedBusy];
+  const focusBusy: BusyInterval[] = [...allBusy];
+  const allBlocks: ScheduledBlock[] = [];
+
+  for (const day of targetDays) {
+    const lunch = scheduleLunch(day, config, lunchBusy);
+    if (lunch) {
+      allBlocks.push(lunch);
+      lunchBusy.push({ start: lunch.start, end: lunch.end });
+      focusBusy.push({ start: lunch.start, end: lunch.end });
+    }
+  }
+
+  const WORKDAYS_PER_WEEK = 5;
+  for (const weekDays of groupByWeek(targetDays)) {
+    const prorated = config.focusTime.weeklyTargetHours * (weekDays.length / WORKDAYS_PER_WEEK);
+    const targetMinutes = Math.round(prorated * 60);
+    allBlocks.push(...scheduleFocusBlocks(weekDays, config, focusBusy, targetMinutes));
+  }
+
+  return allBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
+}
