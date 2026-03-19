@@ -1,7 +1,7 @@
 {
-  "name": "motion-bulk-creator",
+  "name": "calendar-tools",
   "version": "1.0.0",
-  "description": "Bulk create projects and tasks in Motion with rate limiting",
+  "description": "Automatically block focus time and lunch on Google Calendar",
   "main": "index.js",
   "type": "module",
   "scripts": {
