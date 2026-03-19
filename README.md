@@ -120,3 +120,18 @@ All settings are available in the web UI. To configure via file, create `block-t
 
 - Node.js 18+
 - A Google account
+
+---
+
+## Other files in this repo
+
+This repo also contains some personal tooling for [Motion](https://www.usemotion.com) (a task manager) that isn't part of the calendar blocking feature:
+
+| File | What it does |
+|---|---|
+| `index.js` / `tasks.json` | Bulk-creates Motion tasks from a JSON file |
+| `src/cliMotionNotes.ts` | Converts freeform notes into Motion tasks via OpenAI |
+| `pull-open-tasks.js` | Dumps open Motion tasks to markdown for LLM prioritization |
+| `fetch-projects.js` | Lists/searches Motion projects by name |
+
+These require a `MOTION_API_KEY` and `MOTION_WORKSPACE_ID` in your `.env`. They're independent of the calendar tools and can be ignored if you're only here for the focus blocking.
