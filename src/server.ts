@@ -15,6 +15,7 @@ import {
   createEvent,
   deleteEvent,
 } from './googleCalendar.js';
+import { enrichWithAI } from './suggestions.js';
 import {
   type Config,
   DEFAULT_CONFIG,
@@ -179,7 +180,10 @@ app.post('/api/run', async (req, res) => {
 
     const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId);
     const busyIntervals = await queryBusyIntervals(oauthClient, otherCalIds, now, windowEnd);
-    const { blocks: allBlocks, missedLunch, focusShortfall } = scheduleBlocks(config, busyIntervals.confirmed, busyIntervals.all);
+    const env2 = loadEnv();
+    let report = scheduleBlocks(config, busyIntervals.confirmed, busyIntervals.all);
+    if (env2.OPENAI_API_KEY) report = await enrichWithAI(report, env2.OPENAI_API_KEY);
+    const { blocks: allBlocks, missedLunch, focusShortfall } = report;
 
     type BlockResult = {
       label: string;

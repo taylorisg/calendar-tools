@@ -13,6 +13,7 @@ import {
   createEvent,
   deleteEvent,
 } from './googleCalendar.js';
+import { enrichWithAI } from './suggestions.js';
 import {
   type Config,
   type ScheduleReport,
@@ -165,7 +166,8 @@ async function main() {
   const busyIntervals = await queryBusyIntervals(oauthClient, otherCalIds, now, windowEnd);
   console.log(`   Found ${busyIntervals.confirmed.length} confirmed, ${busyIntervals.all.length - busyIntervals.confirmed.length} tentative intervals across ${otherCalIds.length} calendars`);
 
-  const report = scheduleBlocks(config, busyIntervals.confirmed, busyIntervals.all);
+  let report = scheduleBlocks(config, busyIntervals.confirmed, busyIntervals.all);
+  if (env.OPENAI_API_KEY) report = await enrichWithAI(report, env.OPENAI_API_KEY);
   const { blocks: allBlocks, missedLunch, focusShortfall } = report;
 
   if (dryRun) {
