@@ -69,6 +69,7 @@ function loadConfig(): Config {
     workDayEnd: parsed.workDayEnd ?? DEFAULT_CONFIG.workDayEnd,
     lunch: { ...DEFAULT_CONFIG.lunch, ...parsed.lunch },
     focusTime: { ...DEFAULT_CONFIG.focusTime, ...parsed.focusTime },
+    meetingBreak: { ...DEFAULT_CONFIG.meetingBreak, ...parsed.meetingBreak },
   };
 }
 
@@ -138,6 +139,7 @@ app.post('/api/config', (req, res) => {
     workDayEnd: incoming.workDayEnd ?? DEFAULT_CONFIG.workDayEnd,
     lunch: { ...DEFAULT_CONFIG.lunch, ...incoming.lunch },
     focusTime: { ...DEFAULT_CONFIG.focusTime, ...incoming.focusTime },
+    meetingBreak: { ...DEFAULT_CONFIG.meetingBreak, ...incoming.meetingBreak },
   };
   writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
   res.json({ ok: true, config: merged });

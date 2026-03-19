@@ -12,6 +12,13 @@ export type FocusConfig = {
   preferAfterTime?: string;  // "HH:MM" — try afternoons first
 };
 
+export type MeetingBreakConfig = {
+  enabled: boolean;
+  thresholdHours: number;   // trigger a break after this many hours of consecutive meetings
+  durationMinutes: number;  // length of the break
+  gapToleranceMinutes: number; // meetings within this gap are treated as consecutive
+};
+
 export type Config = {
   days: number;
   weekdaysOnly: boolean;
@@ -19,6 +26,7 @@ export type Config = {
   workDayEnd: string;    // "HH:MM"
   lunch: LunchConfig;
   focusTime: FocusConfig;
+  meetingBreak: MeetingBreakConfig;
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -38,12 +46,18 @@ export const DEFAULT_CONFIG: Config = {
     maxBlockMinutes: 180,
     preferAfterTime: '11:00',
   },
+  meetingBreak: {
+    enabled: true,
+    thresholdHours: 2,
+    durationMinutes: 15,
+    gapToleranceMinutes: 5,
+  },
 };
 
 export type ScheduledBlock = {
   start: Date;
   end: Date;
-  label: '🍝 Lunch' | '🤓 Focus Time';
+  label: '🍝 Lunch' | '🤓 Focus Time' | '☕ Meeting Break';
 };
 
 export interface BusyInterval {
@@ -200,6 +214,67 @@ export function buildTargetDays(config: Config): Date[] {
   return days;
 }
 
+/**
+ * Finds runs of consecutive confirmed meetings >= thresholdHours on a given day
+ * and schedules a break after each run if the slot is free.
+ * Meetings within gapToleranceMinutes of each other count as consecutive.
+ */
+export function scheduleMeetingBreaks(
+  day: Date,
+  config: Config,
+  confirmedBusy: BusyInterval[],
+  allBusy: BusyInterval[]
+): ScheduledBlock[] {
+  const { thresholdHours, durationMinutes: breakDuration, gapToleranceMinutes } = config.meetingBreak;
+  const thresholdMs = thresholdHours * 60 * 60_000;
+  const gapMs = gapToleranceMinutes * 60_000;
+
+  const workStart = setTimeOnDay(day, config.workDayStart);
+  const workEnd = setTimeOnDay(day, config.workDayEnd);
+
+  // Only look at confirmed meetings within work hours on this day
+  const dayMeetings = confirmedBusy
+    .filter((b) => b.start >= workStart && b.end <= workEnd)
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  if (dayMeetings.length === 0) return [];
+
+  // Merge meetings that are within gapTolerance of each other into runs
+  const runs: { start: Date; end: Date }[] = [];
+  let runStart = dayMeetings[0].start;
+  let runEnd = dayMeetings[0].end;
+
+  for (let i = 1; i < dayMeetings.length; i++) {
+    const m = dayMeetings[i];
+    if (m.start.getTime() - runEnd.getTime() <= gapMs) {
+      if (m.end > runEnd) runEnd = m.end;
+    } else {
+      runs.push({ start: runStart, end: runEnd });
+      runStart = m.start;
+      runEnd = m.end;
+    }
+  }
+  runs.push({ start: runStart, end: runEnd });
+
+  const breaks: ScheduledBlock[] = [];
+  for (const run of runs) {
+    if (run.end.getTime() - run.start.getTime() < thresholdMs) continue;
+
+    // Place break immediately after the run, if that slot is free
+    const breakStart = run.end;
+    const breakEnd = addMinutes(breakStart, breakDuration);
+    if (breakEnd > workEnd) continue;
+
+    const free = getFreeIntervals(breakStart, breakEnd, allBusy);
+    if (free.some((s) => durationMinutes(s.start, s.end) >= breakDuration)) {
+      breaks.push({ start: breakStart, end: breakEnd, label: '☕ Meeting Break' });
+      allBusy.push({ start: breakStart, end: breakEnd });
+    }
+  }
+
+  return breaks;
+}
+
 /** Core scheduling: returns all blocks to create given busy intervals. */
 export function scheduleBlocks(
   config: Config,
@@ -212,6 +287,11 @@ export function scheduleBlocks(
   const allBlocks: ScheduledBlock[] = [];
 
   for (const day of targetDays) {
+    // Meeting breaks (based on confirmed meetings only)
+    if (config.meetingBreak.enabled) {
+      allBlocks.push(...scheduleMeetingBreaks(day, config, confirmedBusy, focusBusy));
+    }
+
     const lunch = scheduleLunch(day, config, lunchBusy);
     if (lunch) {
       allBlocks.push(lunch);
