@@ -50,7 +50,7 @@ const DEFAULT_PROJECT: string = getDefaultProjectId();
 /**
  * Parse messy notes into structured tasks using OpenAI LLM
  */
-export async function parseNotesToTasks(notes: string): Promise<RawTask[]> {
+export async function parseNotesToTasks(notes: string, projects: MotionProject[] = []): Promise<RawTask[]> {
   const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!openaiApiKey) {
     throw new Error('OPENAI_API_KEY environment variable is required');
@@ -66,13 +66,21 @@ export async function parseNotesToTasks(notes: string): Promise<RawTask[]> {
     day: 'numeric' 
   });
 
+  const projectList = projects.length > 0
+    ? `\nAvailable projects (you MUST set projectHint to EXACTLY one of these names):\n${projects.map(p => `- ${p.name}`).join('\n')}\n`
+    : '';
+
+  const projectRule = projects.length > 0
+    ? `- Set projectHint to EXACTLY one of the project names listed above — copy it character-for-character. Pick the best fit; if nothing fits well, use "Triage".`
+    : `- For each task, infer a likely project name from context (e.g., "Specialty program", "Pricing experiments", "Underwriting platform")`;
+
   const prompt = `You are a task extraction assistant. Parse the following meeting notes or bullet points into structured tasks.
 
 IMPORTANT: Today's date is ${currentDateFormatted} (${currentDate}). Use this as a reference when interpreting relative dates like "tomorrow", "next week", "Friday", etc. All due dates must be in the future relative to today.
-
+${projectList}
 Rules:
 - Extract actionable tasks (not just notes or discussion points)
-- For each task, infer a likely project name from context (e.g., "Specialty program", "Pricing experiments", "Underwriting platform")
+- ${projectRule}
 - If a due date is mentioned or implied, include it in ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)
 - CRITICAL: All due dates must be in ${now.getFullYear()} or later - never use past years like 2023 or 2024
 - When interpreting relative dates (e.g., "Friday", "next week", "by end of month"), calculate them based on today's date: ${currentDateFormatted}
@@ -196,6 +204,16 @@ export function inferProjectId(
 ): ProjectMatch {
   if (allProjects.length === 0) {
     return { confidence: 0 };
+  }
+
+  // Exact match first — GPT is instructed to use the precise project name
+  if (task.projectHint) {
+    const exactMatch = allProjects.find(
+      p => p.name.toLowerCase() === task.projectHint!.toLowerCase()
+    );
+    if (exactMatch) {
+      return { projectId: exactMatch.id, matchedName: exactMatch.name, confidence: 1.0 };
+    }
   }
 
   // Build search text from task
@@ -485,12 +503,18 @@ export async function prepareTasksForReview(
   apiKey: string,
   workspaceId: string
 ): Promise<{ tasks: RawTask[]; projects: MotionProject[]; reviews: TaskReview[] }> {
+  // Step 1: Fetch projects first so GPT can pick exact names
+  console.log('📁 Fetching Motion projects...');
+  const { fetchMotionProjects } = await import('./motionProjects.js');
+  const projects = await fetchMotionProjects(apiKey, workspaceId);
+  console.log(`✅ Found ${projects.length} project(s)\n`);
+
   console.log('📝 Parsing notes into tasks...\n');
 
-  // Step 1: Parse notes to tasks
+  // Step 2: Parse notes to tasks (projects passed for LLM matching)
   let tasks: RawTask[];
   try {
-    tasks = await parseNotesToTasks(notes);
+    tasks = await parseNotesToTasks(notes, projects);
   } catch (error) {
     console.error('❌ Failed to parse notes:', error instanceof Error ? error.message : 'Unknown error');
     throw error;
@@ -502,12 +526,6 @@ export async function prepareTasksForReview(
   }
 
   console.log(`✅ Parsed ${tasks.length} task(s)\n`);
-
-  // Step 2: Fetch projects
-  console.log('📁 Fetching Motion projects...');
-  const { fetchMotionProjects } = await import('./motionProjects.js');
-  const projects = await fetchMotionProjects(apiKey, workspaceId);
-  console.log(`✅ Found ${projects.length} project(s)\n`);
 
   // Step 3: Prepare reviews with project assignments
   const reviews: TaskReview[] = tasks.map(task => {
@@ -566,28 +584,105 @@ export function displayReview(reviews: TaskReview[]): void {
   console.log('='.repeat(70));
 }
 
-/**
- * Prompt user for confirmation with multiple options
- * Returns: 'yes' | 'no' | 'triage'
- */
-export function promptConfirmation(question: string): Promise<'yes' | 'no' | 'triage'> {
-  return new Promise((resolve) => {
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+export type ReviewAction =
+  | { kind: 'yes' }
+  | { kind: 'no' }
+  | { kind: 'triage_all' }
+  | { kind: 'proceed'; overrides: Map<number, string | 'triage'> };
 
-    rl.question(question, (answer: string) => {
+/**
+ * Prompt user for confirmation with per-task override support.
+ *
+ * Accepts:
+ *   y            proceed with shown assignments
+ *   n            cancel
+ *   t            send all to triage
+ *   1=t          send task 1 to triage
+ *   2=Fleet      reassign task 2 to a project (partial name match)
+ *   1=t 3=Pricing  multiple overrides, space-separated (then proceed)
+ */
+export function promptForReviewAction(
+  reviews: TaskReview[],
+  allProjects: MotionProject[]
+): Promise<ReviewAction> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    console.log('\nOptions: y=proceed  n=cancel  t=all-triage  or per-task like: 1=t  2=ProjectName');
+    rl.question('> ', (answer: string) => {
       rl.close();
-      const normalized = answer.trim().toLowerCase();
-      if (normalized === 't' || normalized === 'triage') {
-        resolve('triage');
-      } else if (normalized === 'y' || normalized === 'yes') {
-        resolve('yes');
-      } else {
-        resolve('no');
+      const input = answer.trim().toLowerCase();
+
+      if (input === 'n' || input === 'no') return resolve({ kind: 'no' });
+      if (input === 'y' || input === 'yes') return resolve({ kind: 'yes' });
+      if (input === 't' || input === 'triage') return resolve({ kind: 'triage_all' });
+
+      // Try to parse per-task overrides: "1=t 2=Fleet"
+      const tokens = answer.trim().split(/\s+(?=\d+=)/); // split on whitespace before N=
+      const overrides = new Map<number, string | 'triage'>();
+      let parseOk = true;
+
+      for (const token of tokens) {
+        const eqIdx = token.indexOf('=');
+        if (eqIdx === -1) { parseOk = false; break; }
+        const taskNum = parseInt(token.slice(0, eqIdx), 10);
+        const value = token.slice(eqIdx + 1).trim();
+        if (isNaN(taskNum) || taskNum < 1 || taskNum > reviews.length) { parseOk = false; break; }
+
+        if (value.toLowerCase() === 't' || value.toLowerCase() === 'triage') {
+          overrides.set(taskNum, 'triage');
+        } else {
+          // Find best matching project by partial name
+          const valueLower = value.toLowerCase();
+          const match = allProjects.find(p => p.name.toLowerCase().includes(valueLower));
+          if (match) {
+            overrides.set(taskNum, match.name);
+          } else {
+            console.log(`   ⚠️  No project matching "${value}" found — sending task ${taskNum} to triage`);
+            overrides.set(taskNum, 'triage');
+          }
+        }
       }
+
+      if (parseOk && overrides.size > 0) {
+        return resolve({ kind: 'proceed', overrides });
+      }
+
+      console.log('   ⚠️  Unrecognised input, cancelling.');
+      resolve({ kind: 'no' });
     });
+  });
+}
+
+/**
+ * Apply per-task overrides to reviews
+ */
+function applyOverrides(
+  reviews: TaskReview[],
+  overrides: Map<number, string | 'triage'>,
+  allProjects: MotionProject[]
+): TaskReview[] {
+  const triageProject = findTriageProject(allProjects);
+
+  return reviews.map((review, idx) => {
+    const override = overrides.get(idx + 1); // overrides are 1-indexed
+    if (!override) return review;
+
+    let project: MotionProject | undefined;
+    if (override === 'triage') {
+      project = triageProject ?? undefined;
+    } else {
+      project = allProjects.find(p => p.name === override);
+    }
+
+    if (!project) return review;
+
+    const newAssignment = { projectId: project.id, matchedName: project.name, confidence: 1.0 };
+    return {
+      ...review,
+      assignment: newAssignment,
+      motionInput: rawTaskToMotionInput(review.task, newAssignment, review.motionInput.workspaceId),
+    };
   });
 }
 
@@ -635,7 +730,25 @@ export async function createTasksFromReviews(
   const results = {
     successful: [] as Array<{ title: string; id: string; project: string; confidence: number }>,
     failed: [] as Array<{ title: string; error: string }>,
+    skipped: [] as Array<{ title: string; reason: string }>,
   };
+
+  // Cache of existing task names per project (fetched lazily)
+  const existingTaskNames = new Map<string, Set<string>>();
+
+  async function getExistingNames(projectId: string): Promise<Set<string>> {
+    if (existingTaskNames.has(projectId)) return existingTaskNames.get(projectId)!;
+    try {
+      const tasks = await client.getTasksByProject(projectId);
+      const names = new Set(tasks.map(t => t.name.trim().toLowerCase()));
+      existingTaskNames.set(projectId, names);
+      return names;
+    } catch {
+      // If fetch fails, proceed without duplicate check for this project
+      existingTaskNames.set(projectId, new Set());
+      return existingTaskNames.get(projectId)!;
+    }
+  }
 
   console.log('\n🚀 Creating tasks in Motion...\n');
 
@@ -654,7 +767,17 @@ export async function createTasksFromReviews(
         console.log(`   Using default project ID: ${review.assignment.projectId}`);
       }
 
+      // Duplicate check
+      const existingNames = await getExistingNames(review.assignment.projectId);
+      if (existingNames.has(review.task.title.trim().toLowerCase())) {
+        console.log(`   ⏭️  Skipped — task already exists in ${review.assignment.matchedName}\n`);
+        results.skipped.push({ title: review.task.title, reason: `already exists in ${review.assignment.matchedName}` });
+        continue;
+      }
+
       const created = await client.createTask(review.motionInput);
+      // Add to cache so a second identical task in the same batch is also caught
+      existingNames.add(review.task.title.trim().toLowerCase());
       results.successful.push({
         title: review.task.title,
         id: created.id,
@@ -675,6 +798,7 @@ export async function createTasksFromReviews(
   // Summary
   console.log('📊 Summary:');
   console.log(`   ✅ Successful: ${results.successful.length}/${reviews.length}`);
+  console.log(`   ⏭️  Skipped (duplicates): ${results.skipped.length}/${reviews.length}`);
   console.log(`   ❌ Failed: ${results.failed.length}/${reviews.length}\n`);
 
   if (results.successful.length > 0) {
@@ -719,20 +843,20 @@ export async function createTasksFromNotes(
     finalReviews = reassignAllToTriage(reviews, projects);
     console.log('✅ All tasks reassigned to triage\n');
   } else {
-    // Prompt for confirmation with triage option
-    const response = await promptConfirmation(
-      'Proceed with creating these tasks? (y/n/t for triage): '
-    );
+    const action = await promptForReviewAction(reviews, projects);
 
-    if (response === 'no') {
+    if (action.kind === 'no') {
       console.log('\n❌ Task creation cancelled by user.');
       return;
     }
 
-    if (response === 'triage') {
+    if (action.kind === 'triage_all') {
       console.log('\n🔄 Reassigning all tasks to triage project...');
       finalReviews = reassignAllToTriage(reviews, projects);
       console.log('✅ All tasks reassigned to triage\n');
+    } else if (action.kind === 'proceed' && action.overrides.size > 0) {
+      finalReviews = applyOverrides(reviews, action.overrides, projects);
+      console.log(`✅ Applied ${action.overrides.size} override(s)\n`);
     }
   }
 

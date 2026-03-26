@@ -124,7 +124,7 @@ export class MotionClient {
       `/projects?workspaceId=${this.workspaceId}`,
       'GET'
     );
-    
+
     // Handle different possible response formats
     if (Array.isArray(data)) {
       return data;
@@ -133,8 +133,26 @@ export class MotionClient {
     } else if (data && typeof data === 'object' && 'data' in data && Array.isArray(data.data)) {
       return data.data;
     }
-    
+
     return [];
+  }
+
+  async getTasksByProject(projectId: string): Promise<Array<{ id: string; name: string }>> {
+    const data = await this.makeRequest<unknown>(
+      `/tasks?workspaceId=${this.workspaceId}&projectId=${projectId}`,
+      'GET'
+    );
+
+    const raw: unknown[] = Array.isArray(data)
+      ? data
+      : data && typeof data === 'object' && 'tasks' in data && Array.isArray((data as { tasks: unknown[] }).tasks)
+        ? (data as { tasks: unknown[] }).tasks
+        : [];
+
+    return raw
+      .filter((t): t is { id: string; name: string } =>
+        typeof t === 'object' && t !== null && 'id' in t && 'name' in t
+      );
   }
 }
 
