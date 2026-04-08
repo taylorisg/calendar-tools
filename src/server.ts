@@ -79,6 +79,7 @@ function loadConfig(): Config {
     customCategories: parsed.customCategories ?? [],
     personalMirror: parsed.personalMirror,
     refreshSchedule: parsed.refreshSchedule,
+    excludeCalendars: parsed.excludeCalendars,
   };
 }
 
@@ -215,7 +216,7 @@ app.post('/api/run', async (req, res) => {
       if (e.summary === 'Busy') existingMirrorKeys.add(`Busy::${new Date(e.start).toISOString()}`);
     }
 
-    const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId);
+    const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId, config.excludeCalendars ?? []);
     const busyIntervals = await queryBusyIntervals(oauthClient, otherCalIds, now, windowEnd);
     const env2 = loadEnv();
     let report = scheduleBlocks(config, busyIntervals.confirmed, busyIntervals.all);

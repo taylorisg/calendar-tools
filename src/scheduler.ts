@@ -67,6 +67,7 @@ export type Config = {
   customCategories?: CustomCategory[];
   personalMirror?: PersonalMirrorConfig;
   refreshSchedule?: 'hourly' | 'daily' | 'weekly';  // how often launchd reruns block-time:refresh
+  excludeCalendars?: string[];  // calendar names to ignore when querying busy intervals
 };
 
 export const DEFAULT_CONFIG: Config = {

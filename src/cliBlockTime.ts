@@ -128,6 +128,7 @@ function loadConfig(pathFromArg?: string): Config {
     customCategories: parsed.customCategories ?? [],
     personalMirror: parsed.personalMirror,
     refreshSchedule: parsed.refreshSchedule,
+    excludeCalendars: parsed.excludeCalendars,
   };
 }
 
@@ -200,7 +201,7 @@ async function main() {
   }
 
   console.log('\n📅 Checking calendar availability...');
-  const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId);
+  const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId, config.excludeCalendars ?? []);
   const busyIntervals = await queryBusyIntervals(oauthClient, otherCalIds, now, windowEnd);
   console.log(`   Found ${busyIntervals.confirmed.length} confirmed, ${busyIntervals.all.length - busyIntervals.confirmed.length} tentative intervals across ${otherCalIds.length} calendars`);
 

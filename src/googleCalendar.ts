@@ -209,16 +209,17 @@ export interface BusyInterval {
   summary?: string;
 }
 
-/** Returns IDs of all calendars the user has, excluding the given one. */
+/** Returns IDs of all calendars the user has, excluding the given ID and any calendars by name. */
 export async function listOtherCalendarIds(
   auth: OAuth2Client,
-  excludeId: string
+  excludeId: string,
+  excludeNames: string[] = []
 ): Promise<string[]> {
   const cal = google.calendar({ version: 'v3', auth });
   const { data } = await cal.calendarList.list();
   return (data.items ?? [])
-    .map((c) => c.id!)
-    .filter((id) => id && id !== excludeId);
+    .filter((c) => c.id && c.id !== excludeId && !excludeNames.includes(c.summary ?? ''))
+    .map((c) => c.id!);
 }
 
 export interface BusyIntervals {

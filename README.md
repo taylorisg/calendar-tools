@@ -204,6 +204,7 @@ All settings are available in the web UI. To configure via file, create `block-t
 | `meetingBreak.durationMinutes` | Length of the break |
 | `meetingBreak.gapToleranceMinutes` | Meetings within this gap count as consecutive |
 | `aiInstructions` | Extra context for the AI suggestions (requires `OPENAI_API_KEY`) |
+| `excludeCalendars` | Calendar names to ignore when querying busy intervals (e.g. on-call or info-only calendars) |
 
 ---
 

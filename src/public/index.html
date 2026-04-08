@@ -257,6 +257,11 @@
         <input type="time" id="workDayEnd" value="17:00" />
       </div>
     </div>
+    <div class="field">
+      <label for="excludeCalendars">Exclude calendars</label>
+      <textarea id="excludeCalendars" rows="2" placeholder="One calendar name per line" style="width:100%;padding:10px 12px;border:1.5px solid #e5e5ea;border-radius:10px;font-size:14px;color:#1d1d1f;resize:vertical;font-family:inherit;outline:none;transition:border-color .15s"></textarea>
+      <p class="hint">Calendars to ignore when checking for busy time — e.g. on-call or info-only calendars. Use exact names as they appear in Google Calendar.</p>
+    </div>
   </div>
 
   <div class="card">
@@ -659,6 +664,7 @@
     document.getElementById('meetingBreakDuration').value = c.meetingBreak.durationMinutes;
     document.getElementById('meetingBreakGap').value = c.meetingBreak.gapToleranceMinutes;
     document.getElementById('aiInstructions').value = c.aiInstructions ?? '';
+    document.getElementById('excludeCalendars').value = (c.excludeCalendars ?? []).join('\n');
     customCategories = c.customCategories ?? [];
     renderCustomCategories();
   }
@@ -692,6 +698,7 @@
       },
       aiInstructions: document.getElementById('aiInstructions').value || undefined,
       customCategories,
+      excludeCalendars: document.getElementById('excludeCalendars').value.split('\n').map(s => s.trim()).filter(Boolean),
     };
   }
 
