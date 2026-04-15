@@ -1,10 +1,36 @@
 #!/bin/bash
-# Installs a launchd job that runs block-time:refresh every Monday at 8am.
+# Installs a launchd job that runs block-time:refresh on a schedule.
+#
+# The schedule is read from block-time-config.json ("refreshSchedule": "hourly"|"daily"|"weekly").
+# Falls back to "weekly" (every Monday at 8am) if not set.
+#
+# Usage:
+#   npm run schedule:install               # reads refreshSchedule from config
+#   npm run schedule:install -- --hourly   # override: every hour
+#   npm run schedule:install -- --daily    # override: every day at 8am
+#   npm run schedule:install -- --weekly   # override: every Monday at 8am
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PLIST_LABEL="com.calendar-tools.block-time"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 LOG_DIR="$PROJECT_DIR/logs"
+CONFIG_FILE="$PROJECT_DIR/block-time-config.json"
+
+# Parse flag overrides
+FLAG_SCHEDULE=""
+for arg in "$@"; do
+  [ "$arg" = "--hourly" ] && FLAG_SCHEDULE="hourly"
+  [ "$arg" = "--daily" ]  && FLAG_SCHEDULE="daily"
+  [ "$arg" = "--weekly" ] && FLAG_SCHEDULE="weekly"
+done
+
+# Read from config if no flag override
+if [ -z "$FLAG_SCHEDULE" ] && [ -f "$CONFIG_FILE" ]; then
+  FLAG_SCHEDULE="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));process.stdout.write(c.refreshSchedule||'')}catch(e){}")"
+fi
+
+# Default to weekly
+SCHEDULE="${FLAG_SCHEDULE:-weekly}"
 
 mkdir -p "$LOG_DIR"
 
@@ -13,6 +39,32 @@ NPM_PATH="$(which npm)"
 if [ -z "$NPM_PATH" ]; then
   echo "❌ npm not found. Make sure Node.js is installed and in your PATH."
   exit 1
+fi
+
+if [ "$SCHEDULE" = "hourly" ]; then
+  SCHEDULE_KEY="StartInterval"
+  SCHEDULE_VALUE="<integer>3600</integer>"
+  SCHEDULE_DESC="every hour"
+elif [ "$SCHEDULE" = "daily" ]; then
+  SCHEDULE_KEY="StartCalendarInterval"
+  SCHEDULE_VALUE='<dict>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>'
+  SCHEDULE_DESC="every day at 8am"
+else
+  SCHEDULE_KEY="StartCalendarInterval"
+  SCHEDULE_VALUE='<dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>'
+  SCHEDULE_DESC="every Monday at 8am"
 fi
 
 cat > "$PLIST_PATH" <<EOF
@@ -33,15 +85,8 @@ cat > "$PLIST_PATH" <<EOF
   <key>WorkingDirectory</key>
   <string>$PROJECT_DIR</string>
 
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Weekday</key>
-    <integer>1</integer>
-    <key>Hour</key>
-    <integer>8</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <key>$SCHEDULE_KEY</key>
+  $SCHEDULE_VALUE
 
   <key>StandardOutPath</key>
   <string>$LOG_DIR/block-time.log</string>
@@ -61,7 +106,7 @@ EOF
 launchctl unload "$PLIST_PATH" 2>/dev/null
 launchctl load "$PLIST_PATH"
 
-echo "✅ Scheduled! block-time:refresh will run every Monday at 8am."
+echo "✅ Scheduled! block-time:refresh will run $SCHEDULE_DESC."
 echo "   Logs: $LOG_DIR/block-time.log"
 echo ""
 echo "   To uninstall: npm run schedule:uninstall"

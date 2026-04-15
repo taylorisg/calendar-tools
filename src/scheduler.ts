@@ -50,6 +50,12 @@ export type CustomCategory = {
   fixedDays?: 'weekdays' | 'all';
 };
 
+export type PersonalMirrorConfig = {
+  enabled: boolean;
+  calendarNames: string[];  // names as they appear in Google Calendar (usually the email address)
+  lookAheadDays?: number;   // how far out to mirror (default: 30)
+};
+
 export type Config = {
   days: number;
   weekdaysOnly: boolean;
@@ -60,6 +66,9 @@ export type Config = {
   meetingBreak: MeetingBreakConfig;
   aiInstructions?: string;  // extra context injected into the AI suggestions prompt
   customCategories?: CustomCategory[];
+  personalMirror?: PersonalMirrorConfig;
+  refreshSchedule?: 'hourly' | 'daily' | 'weekly';  // how often launchd reruns block-time:refresh
+  excludeCalendars?: string[];  // calendar names to ignore when querying busy intervals
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -157,7 +166,9 @@ export function getFreeIntervals(
   return free;
 }
 
-/** Schedules one lunch block for a day if a sufficient gap exists. */
+/** Schedules one lunch block for a day if a sufficient gap exists.
+ *  Falls back to the first free slot after the window (up to end of work day)
+ *  if the preferred window is fully booked. */
 export function scheduleLunch(
   day: Date,
   config: Config,
@@ -167,9 +178,18 @@ export function scheduleLunch(
   const windowEnd = setTimeOnDay(day, config.lunch.windowEnd);
   const free = getFreeIntervals(windowStart, windowEnd, busy);
   const slot = free.find((s) => durationMinutes(s.start, s.end) >= config.lunch.minMinutes);
-  if (!slot) return null;
-  const duration = Math.min(durationMinutes(slot.start, slot.end), config.lunch.maxMinutes);
-  return { start: slot.start, end: addMinutes(slot.start, duration), label: '🍝 Lunch' };
+  if (slot) {
+    const duration = Math.min(durationMinutes(slot.start, slot.end), config.lunch.maxMinutes);
+    return { start: slot.start, end: addMinutes(slot.start, duration), label: '🍝 Lunch' };
+  }
+
+  // Fallback: look for a free slot after the window, up to end of work day
+  const workEnd = setTimeOnDay(day, config.workDayEnd);
+  const afterFree = getFreeIntervals(windowEnd, workEnd, busy);
+  const fallback = afterFree.find((s) => durationMinutes(s.start, s.end) >= config.lunch.minMinutes);
+  if (!fallback) return null;
+  const duration = Math.min(durationMinutes(fallback.start, fallback.end), config.lunch.maxMinutes);
+  return { start: fallback.start, end: addMinutes(fallback.start, duration), label: '🍝 Lunch' };
 }
 
 /** Schedules focus blocks across days to fill targetMinutes. Mutates busy. */

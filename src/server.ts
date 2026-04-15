@@ -12,6 +12,8 @@ import {
   listOtherCalendarIds,
   queryBusyIntervals,
   listEvents,
+  listEventIntervals,
+  listCalendars,
   createEvent,
   deleteEvent,
   type GCalEvent,
@@ -27,6 +29,7 @@ import {
   groupByWeek,
   buildTargetDays,
   setTimeOnDay,
+  isWeekend,
 } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,6 +78,9 @@ function loadConfig(): Config {
     meetingBreak: { ...DEFAULT_CONFIG.meetingBreak, ...parsed.meetingBreak },
     aiInstructions: parsed.aiInstructions,
     customCategories: parsed.customCategories ?? [],
+    personalMirror: parsed.personalMirror,
+    refreshSchedule: parsed.refreshSchedule,
+    excludeCalendars: parsed.excludeCalendars,
   };
 }
 
@@ -147,9 +153,27 @@ app.post('/api/config', (req, res) => {
     meetingBreak: { ...DEFAULT_CONFIG.meetingBreak, ...incoming.meetingBreak },
     aiInstructions: incoming.aiInstructions,
     customCategories: incoming.customCategories ?? [],
+    personalMirror: incoming.personalMirror,
+    refreshSchedule: incoming.refreshSchedule,
   };
   writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
   res.json({ ok: true, config: merged });
+});
+
+app.get('/api/calendars', async (_req, res) => {
+  const env = loadEnv();
+  if (!env.GOOGLE_REFRESH_TOKEN) {
+    res.status(401).json({ error: 'Not authenticated.' });
+    return;
+  }
+  try {
+    const oauthClient = makeOAuth2Client(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
+    setRefreshToken(oauthClient, env.GOOGLE_REFRESH_TOKEN);
+    const cals = await listCalendars(oauthClient);
+    res.json({ calendars: cals });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/run', async (req, res) => {
@@ -185,7 +209,16 @@ app.post('/api/run', async (req, res) => {
       for (const e of existingEvents) existingGCalKeys.add(`${e.summary}::${new Date(e.start).toISOString()}`);
     }
 
-    const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId);
+    // Mirror blocks go on the primary calendar — track existing ones separately
+    const mirrorLookAhead = config.personalMirror?.lookAheadDays ?? 30;
+    const mirrorWindowEnd = new Date(now.getTime() + mirrorLookAhead * 24 * 60 * 60_000);
+    const existingMirrorKeys = new Set<string>();
+    const existingMirrorEvents = await listEvents(oauthClient, 'primary', now, mirrorWindowEnd);
+    for (const e of existingMirrorEvents) {
+      if (e.summary === 'Busy') existingMirrorKeys.add(`Busy::${new Date(e.start).toISOString()}`);
+    }
+
+    const otherCalIds = await listOtherCalendarIds(oauthClient, blockedCalId, config.excludeCalendars ?? []);
     const busyIntervals = await queryBusyIntervals(oauthClient, otherCalIds, now, windowEnd);
 
     // Include existing blocks so the scheduler doesn't double-book over them
@@ -275,6 +308,46 @@ app.post('/api/run', async (req, res) => {
             totalMinutes -= r.duration;
             r.skipped = false;
             r.deleted = true;
+          }
+        }
+      }
+    }
+
+    // ── Personal calendar mirroring ─────────────────────────────────────────────
+    const mirrorConfig = config.personalMirror;
+    const mirrorEnabled = mirrorConfig?.enabled && (mirrorConfig.calendarNames?.length ?? 0) > 0;
+
+    if (mirrorEnabled) {
+      const allCals = await listCalendars(oauthClient);
+      const mirrorCalIds = allCals
+        .filter((c) => mirrorConfig!.calendarNames.includes(c.name))
+        .map((c) => c.id);
+
+      for (const calId of mirrorCalIds) {
+        const events = await listEventIntervals(oauthClient, calId, now, mirrorWindowEnd);
+        for (const { start, end } of events) {
+          if (config.weekdaysOnly && isWeekend(start)) continue;
+          const workStart = setTimeOnDay(start, config.workDayStart);
+          const workEnd = setTimeOnDay(start, config.workDayEnd);
+          if (start >= workEnd || end <= workStart) continue;
+
+          const gcalKey = `Busy::${start.toISOString()}`;
+          const entry: BlockResult = {
+            label: 'Busy',
+            start: start.toISOString(),
+            end: end.toISOString(),
+            day: formatDayLabel(start),
+            timeRange: `${formatTime(start)} – ${formatTime(end)}`,
+            duration: durationMinutes(start, end),
+          };
+
+          if (dryRun) {
+            results.push(entry);
+          } else if (existingMirrorKeys.has(gcalKey)) {
+            results.push({ ...entry, skipped: true });
+          } else {
+            await createEvent(oauthClient, 'primary', 'Busy', start, end, 'private');
+            results.push({ ...entry, created: true });
           }
         }
       }
