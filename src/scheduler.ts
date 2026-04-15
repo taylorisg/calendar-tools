@@ -13,6 +13,7 @@ export type FocusConfig = {
   maxBlockMinutes: number;
   maxDailyFocusHours: number;
   preferAfterTime?: string;  // "HH:MM" — try afternoons first
+  scaleWithWorkingDays?: boolean; // prorate target down for OOO/holiday days
 };
 
 export type MeetingBreakConfig = {
@@ -80,6 +81,7 @@ export const DEFAULT_CONFIG: Config = {
     maxBlockMinutes: 180,
     maxDailyFocusHours: 3,
     preferAfterTime: '11:00',
+    scaleWithWorkingDays: true,
   },
   meetingBreak: {
     enabled: true,
@@ -414,13 +416,31 @@ export function scheduleBlocks(
     }
   }
 
+  // Build set of OOO/holiday days from full-day busy intervals
+  const oooDayKeys = new Set<string>();
+  if (config.focusTime.scaleWithWorkingDays) {
+    for (const interval of allBusy) {
+      if (interval.start.getHours() === 0 && interval.start.getMinutes() === 0 &&
+          interval.end.getHours() === 0 && interval.end.getMinutes() === 0) {
+        const d = new Date(interval.start);
+        while (d < interval.end) {
+          oooDayKeys.add(d.toISOString().slice(0, 10));
+          d.setDate(d.getDate() + 1);
+        }
+      }
+    }
+  }
+
   const WORKDAYS_PER_WEEK = 5;
   let totalFocusScheduled = 0;
   let totalFocusTarget = 0;
   const focusSuggestions: string[] = [];
 
   for (const weekDays of groupByWeek(targetDays)) {
-    const prorated = config.focusTime.weeklyTargetHours * (weekDays.length / WORKDAYS_PER_WEEK);
+    const availableDays = config.focusTime.scaleWithWorkingDays
+      ? weekDays.filter(d => !oooDayKeys.has(d.toISOString().slice(0, 10))).length
+      : weekDays.length;
+    const prorated = config.focusTime.weeklyTargetHours * (availableDays / WORKDAYS_PER_WEEK);
     const targetMinutes = Math.round(prorated * 60);
     totalFocusTarget += targetMinutes;
 

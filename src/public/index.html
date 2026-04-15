@@ -309,6 +309,16 @@
       <input type="number" id="focusWeeklyHours" min="1" max="40" value="8" />
       <p class="hint">Prorated automatically for partial weeks.</p>
     </div>
+    <div class="field">
+      <div class="toggle-row">
+        <label for="focusScaleWithWorkingDays">Scale target with working days</label>
+        <label class="toggle">
+          <input type="checkbox" id="focusScaleWithWorkingDays" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="hint">Reduces the weekly target proportionally for OOO days and holidays.</p>
+    </div>
     <div class="row">
       <div class="field">
         <label for="focusMin">Min block (min)</label>
@@ -654,6 +664,7 @@
     document.getElementById('focusMax').value = c.focusTime.maxBlockMinutes;
     document.getElementById('focusPreferAfter').value = c.focusTime.preferAfterTime ?? '11:00';
     document.getElementById('focusMaxDaily').value = c.focusTime.maxDailyFocusHours ?? 3;
+    document.getElementById('focusScaleWithWorkingDays').checked = c.focusTime.scaleWithWorkingDays ?? true;
     document.getElementById('meetingBreakEnabled').checked = c.meetingBreak.enabled;
     document.getElementById('meetingBreakThreshold').value = c.meetingBreak.thresholdHours;
     document.getElementById('meetingBreakDuration').value = c.meetingBreak.durationMinutes;
@@ -683,6 +694,7 @@
         maxBlockMinutes: parseInt(document.getElementById('focusMax').value),
         maxDailyFocusHours: parseFloat(document.getElementById('focusMaxDaily').value),
         preferAfterTime: document.getElementById('focusPreferAfter').value,
+        scaleWithWorkingDays: document.getElementById('focusScaleWithWorkingDays').checked,
       },
       meetingBreak: {
         enabled: document.getElementById('meetingBreakEnabled').checked,

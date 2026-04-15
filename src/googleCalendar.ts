@@ -210,8 +210,14 @@ export async function queryBusyIntervals(
       });
       for (const e of data.items ?? []) {
         if (e.status === 'cancelled') continue;
+        // Handle OOO and other all-day events — mark the whole day as busy
+        if (e.eventType === 'outOfOffice' || (!e.start?.dateTime && e.start?.date)) {
+          const dayStart = new Date(e.start!.date! + 'T00:00:00');
+          const dayEnd = new Date((e.end!.date ?? e.start!.date)! + 'T00:00:00');
+          confirmed.push({ start: dayStart, end: dayEnd });
+          continue;
+        }
         if (!e.start?.dateTime || !e.end?.dateTime) continue;
-        // Skip events where the user is the organizer with no other attendees (their own blocks)
         const interval = { start: new Date(e.start.dateTime), end: new Date(e.end.dateTime), summary: e.summary ?? undefined };
         const selfAttendee = e.attendees?.find((a) => a.self);
         const isTentative =
